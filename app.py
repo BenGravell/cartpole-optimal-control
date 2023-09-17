@@ -365,6 +365,7 @@ with st.expander("Results", expanded=True):
     POLE_COLOR = MEDIUM_BLUE
     AXLE_COLOR = LIGHT_BLUE
     FORCE_COLOR = ORANGE
+    GUIDELINE_COLOR = DARK_BLUE
 
     pygame.init()
 
@@ -509,7 +510,7 @@ with st.expander("Results", expanded=True):
 
         if animation_options["show_guidelines"]:
             # Draw guidelines
-            gfxdraw.hline(surface, 0, screen_width, cart_y, (0, 0, 0, 127))
+            gfxdraw.hline(surface, 0, screen_width, cart_y, GUIDELINE_COLOR + [127])
 
         if animation_options["show_target_state"]:
             # Draw the ghosted target state
