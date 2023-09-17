@@ -289,7 +289,7 @@ plot_cols = st.columns(2)
 with plot_cols[0]:
     st.subheader("Time-series Plot", anchor=False)
     fig = px.line(ocp_df, x="time", y=all_fields)
-    st.plotly_chart(fig)
+    st.plotly_chart(fig, use_container_width=True)
 
 with plot_cols[1]:
     st.subheader("Phase-space Plot", anchor=False)
@@ -299,7 +299,7 @@ with plot_cols[1]:
     with subcols[1]:
         y_field = st.selectbox("y-axis field", options=all_fields, index=1)
     fig = px.line(ocp_df, x=x_field, y=y_field, hover_data=["time"])
-    st.plotly_chart(fig)
+    st.plotly_chart(fig, use_container_width=True)
 
 
 # Constants
