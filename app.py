@@ -114,7 +114,7 @@ with st.expander("Options", expanded=False):
             gs = st.slider("Gravitational Acceleration (G's)", min_value=0.0, max_value=4.0, value=1.0, step=0.1)
             gravity = 9.81 * gs
             mass_cart = st.slider("Mass of cart (kg)", min_value=0.0, max_value=2.0, value=1.0, step=0.1)
-            mass_pole = st.slider("Mass of pole (kg)", min_value=0.0, max_value=2.0, value=0.8, step=0.1)
+            mass_pole = st.slider("Mass of pole (kg)", min_value=0.0, max_value=2.0, value=1.0, step=0.1)
             length_pole = st.slider("Length of pole (m)", min_value=0.4, max_value=1.2, value=1.0, step=0.1)
             model_params = {
                 "gravity": gravity,
@@ -126,15 +126,15 @@ with st.expander("Options", expanded=False):
         with option_cols_row1[1]:
             st.subheader("Simulation Options", anchor=False)
             T = st.slider("Simulation Duration (seconds)", min_value=1, max_value=20, value=5, step=1)
-            sim_fps = st.select_slider("Simulation Frame Rate (frames per second)", options=[5, 10, 25, 50], value=25)
+            sim_fps = st.select_slider("Simulation Frame Rate (frames per second)", options=[5, 10, 25, 50], value=50)
             N = int(sim_fps * T)  # Number of control intervals
 
         with option_cols_row1[2]:
             st.subheader("Animation Options", anchor=False)
             duration_end_hold_sec = st.slider(
-                "Animation Duration Pause at End (sec)", min_value=0, max_value=5, value=2
+                "Animation Duration Pause at End (sec)", min_value=0, max_value=5, value=1
             )
-            ani_fps = st.select_slider("Animation Frame Rate (frames per second)", options=[5, 10, 25, 50], value=25)
+            ani_fps = st.select_slider("Animation Frame Rate (frames per second)", options=[5, 10, 25, 50], value=50)
             show_animation = st.toggle("Show Animation", value=True)
             show_force = st.toggle("Show Force Arrow", value=True)
             show_target_state = st.toggle("Show Target State Outline", value=True)
@@ -178,22 +178,19 @@ with st.expander("Options", expanded=False):
                 "Position Constraint (m)", min_value=-1.5, max_value=1.5, value=(-1.0, 1.0), step=0.1
             )
             velocity_min, velocity_max = st.slider(
-                "Velocity Constraint (m/s)", min_value=-20.0, max_value=20.0, value=(-8.0, 8.0), step=0.5
+                "Velocity Constraint (m/s)", min_value=-20.0, max_value=20.0, value=(-15.0, 15.0), step=0.5
             )
             angle_min_deg, angle_max_deg = st.slider(
-                "Angle Constraint (deg)", min_value=-360, max_value=360, value=(-180, 180), step=10
+                "Angle Constraint (deg)", min_value=-360, max_value=360, value=(-270, 270), step=10
             )
             angular_velocity_min, angular_velocity_max = st.slider(
-                "Angular Velocity Constraint (rev/s)", min_value=-2.0, max_value=2.0, value=(-2.0, 2.0), step=0.1
+                "Angular Velocity Constraint (rad/s)", min_value=-40, max_value=40, value=(-20, 20), step=1
             )
 
             angle_min, angle_max = angle_min_deg * (2 * np.pi / 360), angle_max_deg * (2 * np.pi / 360)
-            angular_velocity_min, angular_velocity_max = angular_velocity_min * (2 * np.pi), angular_velocity_max * (
-                2 * np.pi
-            )
 
             force_min, force_max = st.slider(
-                "Force Constraint (N)", min_value=-50, max_value=50, value=(-20, 20), step=5
+                "Force Constraint (N)", min_value=-50, max_value=50, value=(-30, 30), step=5
             )
 
             constraint_options = {
@@ -206,11 +203,11 @@ with st.expander("Options", expanded=False):
 
         with option_cols_row2[2]:
             st.subheader("Objective Options", anchor=False)
-            position_penalty = st.slider("Position Penalty", min_value=0, max_value=10, value=0, step=1)
-            velocity_penalty = st.slider("Velocity Penalty", min_value=0, max_value=10, value=1, step=1)
-            angle_penalty = st.slider("Angle Penalty", min_value=0, max_value=10, value=0, step=1)
-            angular_velocity_penalty = st.slider("Angular Velocity Penalty", min_value=0, max_value=10, value=4, step=1)
-            force_penalty = st.slider("Force Penalty", min_value=0, max_value=10, value=2, step=1)
+            position_penalty = st.slider("Position Penalty", min_value=0, max_value=10, value=1, step=1)
+            velocity_penalty = st.slider("Velocity Penalty", min_value=0, max_value=10, value=2, step=1)
+            angle_penalty = st.slider("Angle Penalty", min_value=0, max_value=10, value=1, step=1)
+            angular_velocity_penalty = st.slider("Angular Velocity Penalty", min_value=0, max_value=10, value=8, step=1)
+            force_penalty = st.slider("Force Penalty", min_value=0, max_value=10, value=4, step=1)
             penalty_function = st.selectbox("Penalty Function", options=["square", "smooth_abs"], help="For each element in the sequence, the penalty function specified here is applied and the result is added to the objective. The `square` function computes the square of an element. The `smooth_abs` function computes `sqrt(square(x) + eps)` where `eps` is a small number. Generally, the `smooth_abs` function is much more expensive to use, since it leads to a more complicated and less well-conditioned optimization problem.")
             penalty_options = {
                 "position": position_penalty,
@@ -220,6 +217,8 @@ with st.expander("Options", expanded=False):
                 "force": force_penalty,
                 "penalty_function": penalty_function,
             }
+
+            max_iter = st.slider("Maximum Iterations for IPOPT Solver", min_value=10, max_value=10000, value=1000)
 
         st.form_submit_button("Update Options", type="primary")
 
@@ -300,15 +299,7 @@ def solve_optimal_control_problem(x0, xT, N, T, model_params, penalty_options, c
     opti.set_initial(U[0, :], 0)
 
     # ---- solve NLP              ------
-    # solver_options = {
-    #     'ipopt': {
-    #         'print_level': 0
-    #     },
-    #     'print_time': 0,
-    #     'verbose': False,
-    #     'error_on_fail': True
-    # }
-    solver_options = {"ipopt": {"max_iter": 1000}}
+    solver_options = {"ipopt": {"max_iter": max_iter}}
     opti.solver("ipopt", solver_options)  # set numerical backend
     try:
         sol = opti.solve()  # actual solve
@@ -362,18 +353,18 @@ else:
         WIDTH, HEIGHT = 800, 600
         BACKGROUND_COLOR = (255, 255, 255)
 
-        # Color palette
-        # https://coolors.co/palette/8ecae6-219ebc-023047-ffb703-fb8500
-        LIGHT_BLUE = [142, 202, 230]
-        MEDIUM_BLUE = [33, 158, 188]
-        DARK_BLUE = [2, 48, 71]
-        GOLD = [255, 183, 3]
-        ORANGE = [251, 133, 0]
-
+        # Color palette        
+        # https://coolors.co/palette/154274-1368C5-4EA7BA-BEE9E7-F68B3F
+        DARK_BLUE = [21, 66, 116]  # 154274
+        MEDIUM_BLUE = [19, 104, 197] # 1368C5
+        LIGHT_BLUE = [78, 167, 186]  # 4EA7BA
+        PALE_BLUE = [190, 233, 231]  # BEE9E7
+        ORANGE = [246, 139, 63]  # F68B3F
+        
         BORDER_COLOR = DARK_BLUE
-        CART_COLOR = DARK_BLUE
-        POLE_COLOR = MEDIUM_BLUE
-        AXLE_COLOR = LIGHT_BLUE
+        CART_COLOR = MEDIUM_BLUE
+        POLE_COLOR = LIGHT_BLUE
+        AXLE_COLOR = PALE_BLUE
         FORCE_COLOR = ORANGE
         GUIDELINE_COLOR = DARK_BLUE
         CONSTRAINT_COLOR = DARK_BLUE
@@ -534,13 +525,17 @@ else:
             pos_min_screen_coords = int(constraint_options["position"].min * scale + screen_width / 2 - cart_width / 2)
             pos_max_screen_coords = int(constraint_options["position"].max * scale + screen_width / 2 + cart_width / 2)
 
+            cart_top = cart_y - int(cart_height / 2)
+            cart_bot = cart_y + int(cart_height / 2)
+
             if animation_options["show_guidelines"]:
                 # Draw guidelines
-                gfxdraw.hline(surface, pos_min_screen_coords, pos_max_screen_coords, cart_y, GUIDELINE_COLOR + [127])
+                gfxdraw.hline(surface, pos_min_screen_coords, pos_max_screen_coords, cart_top, GUIDELINE_COLOR + [127])
+                gfxdraw.hline(surface, pos_min_screen_coords, pos_max_screen_coords, cart_bot, GUIDELINE_COLOR + [127])
 
             if animation_options["show_constraint_guidelines"]:
-                gfxdraw.vline(surface, pos_min_screen_coords, cart_y - int(cart_height / 2), cart_y + int(cart_height / 2), CONSTRAINT_COLOR + [127])
-                gfxdraw.vline(surface, pos_max_screen_coords, cart_y - int(cart_height / 2), cart_y + int(cart_height / 2), CONSTRAINT_COLOR + [127])
+                gfxdraw.vline(surface, pos_min_screen_coords, cart_top, cart_bot, CONSTRAINT_COLOR + [127])
+                gfxdraw.vline(surface, pos_max_screen_coords, cart_top, cart_bot, CONSTRAINT_COLOR + [127])
                 
 
             if animation_options["show_target_state"]:
