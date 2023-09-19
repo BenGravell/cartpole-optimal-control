@@ -104,13 +104,20 @@ m = 1  # number of actions
 
 with st.expander("Options", expanded=False):
     with st.form("options_form"):
-        st.header("Options", anchor=False)
+        button_container = st.container()
 
-        option_cols_row1 = st.columns(3)
-        option_cols_row2 = st.columns(3)
+        tab_names = [
+            "Model Parameters",
+            "Simulation",
+            "Animation",
+            "Initial States",
+            "Constraints",
+            "Objective",
+            "Solver",
+        ]
+        tabs = st.tabs(tab_names)
 
-        with option_cols_row1[0]:
-            st.subheader("Model Parameters", anchor=False)
+        with tabs[tab_names.index("Model Parameters")]:
             gs = st.slider("Gravitational Acceleration (G's)", min_value=0.0, max_value=4.0, value=1.0, step=0.1)
             gravity = 9.81 * gs
             mass_cart = st.slider("Mass of cart (kg)", min_value=0.0, max_value=2.0, value=1.0, step=0.1)
@@ -123,18 +130,37 @@ with st.expander("Options", expanded=False):
                 "length_pole": length_pole,
             }
 
-        with option_cols_row1[1]:
-            st.subheader("Simulation Options", anchor=False)
+        with tabs[tab_names.index("Simulation")]:
             T = st.slider("Simulation Duration (seconds)", min_value=1, max_value=20, value=5, step=1)
-            sim_fps = st.select_slider("Simulation Frame Rate (frames per second)", options=[5, 10, 25, 50], value=50)
+            sim_fps = st.select_slider(
+                "Simulation Frame Rate (frames per second)",
+                options=[5, 10, 25, 50],
+                value=25,
+                help=(
+                    "This controls the rate at which the dynamics evolve, i.e how frequently states and actions are"
+                    " updated. Larger values will result in a larger optimal control problem that takes longer to"
+                    " solve, but will be more precise."
+                ),
+            )
             N = int(sim_fps * T)  # Number of control intervals
 
-        with option_cols_row1[2]:
-            st.subheader("Animation Options", anchor=False)
+        with tabs[tab_names.index("Animation")]:
             duration_end_hold_sec = st.slider(
                 "Animation Duration Pause at End (sec)", min_value=0, max_value=5, value=1
             )
-            ani_fps = st.select_slider("Animation Frame Rate (frames per second)", options=[5, 10, 25, 50], value=50)
+            # 50 fps is the max practical frame rate for GIF
+            # https://wunkolo.github.io/post/2020/02/buttery-smooth-10fps/
+            ani_fps = st.select_slider(
+                "Animation Frame Rate (frames per second)",
+                options=[5, 10, 25, 50],
+                value=50,
+                help=(
+                    "This controls the rate at which animation frames are displayed. Simulation result data is linearly"
+                    " interpolated from simulation time to animation time. Larver values will result in more frames"
+                    " that take longer to render and save, but will play back more smoothly. There is a hard limit at"
+                    " 50 FPS due to technical limitations of GIFs."
+                ),
+            )
             show_animation = st.toggle("Show Animation", value=True)
             show_force = st.toggle("Show Force Arrow", value=True)
             show_target_state = st.toggle("Show Target State Outline", value=True)
@@ -153,11 +179,8 @@ with st.expander("Options", expanded=False):
                 "duration_end_hold_sec": duration_end_hold_sec,
             }
 
-        with option_cols_row2[0]:
-            st.subheader("Initial States", anchor=False)
-            position_0 = st.slider(
-                "Position (m)", min_value=-1.5, max_value=1.5, value=0.0, step=0.1
-            )
+        with tabs[tab_names.index("Initial States")]:
+            position_0 = st.slider("Position (m)", min_value=-1.5, max_value=1.5, value=0.0, step=0.1)
             veloicty_0 = st.slider("Velocity (m/s)", min_value=-4.0, max_value=4.0, value=0.0, step=0.1)
             angle_0_deg = st.slider("Angle (deg)", min_value=-180, max_value=180, value=0, step=10)
             angle_0 = angle_0_deg * (2 * np.pi / 360)
@@ -172,8 +195,7 @@ with st.expander("Options", expanded=False):
             # TODO handle off by 2*pi by encoding end points using sin, cos representation
             xT = np.array([0, 0, np.pi, 0])  # Straight up, centered
 
-        with option_cols_row2[1]:
-            st.subheader("Constraint Options", anchor=False)
+        with tabs[tab_names.index("Constraints")]:
             position_min, position_max = st.slider(
                 "Position Constraint (m)", min_value=-1.5, max_value=1.5, value=(-1.0, 1.0), step=0.1
             )
@@ -201,14 +223,23 @@ with st.expander("Options", expanded=False):
                 "force": MinMax(force_min, force_max),
             }
 
-        with option_cols_row2[2]:
-            st.subheader("Objective Options", anchor=False)
+        with tabs[tab_names.index("Objective")]:
             position_penalty = st.slider("Position Penalty", min_value=0, max_value=10, value=1, step=1)
             velocity_penalty = st.slider("Velocity Penalty", min_value=0, max_value=10, value=2, step=1)
             angle_penalty = st.slider("Angle Penalty", min_value=0, max_value=10, value=1, step=1)
             angular_velocity_penalty = st.slider("Angular Velocity Penalty", min_value=0, max_value=10, value=8, step=1)
             force_penalty = st.slider("Force Penalty", min_value=0, max_value=10, value=4, step=1)
-            penalty_function = st.selectbox("Penalty Function", options=["square", "smooth_abs"], help="For each element in the sequence, the penalty function specified here is applied and the result is added to the objective. The `square` function computes the square of an element. The `smooth_abs` function computes `sqrt(square(x) + eps)` where `eps` is a small number. Generally, the `smooth_abs` function is much more expensive to use, since it leads to a more complicated and less well-conditioned optimization problem.")
+            penalty_function = st.selectbox(
+                "Penalty Function",
+                options=["square", "smooth_abs"],
+                help=(
+                    "For each element in the sequence, the penalty function specified here is applied and the result is"
+                    " added to the objective. The `square` function computes the square of an element. The `smooth_abs`"
+                    " function computes `sqrt(square(x) + eps)` where `eps` is a small number. Generally, the"
+                    " `smooth_abs` function is much more expensive to use, since it leads to a more complicated and"
+                    " less well-conditioned optimization problem."
+                ),
+            )
             penalty_options = {
                 "position": position_penalty,
                 "velocity": velocity_penalty,
@@ -218,9 +249,13 @@ with st.expander("Options", expanded=False):
                 "penalty_function": penalty_function,
             }
 
-            max_iter = st.slider("Maximum Iterations for IPOPT Solver", min_value=10, max_value=10000, value=1000)
+        with tabs[tab_names.index("Solver")]:
+            max_iter = st.select_slider(
+                "Maximum Iterations for IPOPT Solver", options=[10, 100, 1000, 10000], value=1000
+            )
 
-        st.form_submit_button("Update Options", type="primary")
+        with button_container:
+            st.form_submit_button("Update Options", type="primary")
 
 
 def casadi_square(x):
@@ -308,7 +343,9 @@ def solve_optimal_control_problem(x0, xT, N, T, model_params, penalty_options, c
 
     state_out = {field: sol.value(state_field_vars[field]) for field in state_fields}
     ocp_df = pd.DataFrame.from_dict(state_out, orient="columns")
-    ocp_df["time"] = np.arange(N + 1) * dt
+    ocp_df["time"] = np.round(
+        np.arange(N + 1) * dt, 9
+    )  # sub-nanosecond time resolution not needed, mitigate float rounding issues
 
     action_out = {field: sol.value(action_field_vars[field]) for field in action_fields}
     ocp_df["force"] = action_out["force"].tolist() + [0]
@@ -320,18 +357,19 @@ with st.spinner("Solving optimal control problem..."):
 # st.write(ocp_df)
 
 if exc is not None:
-    st.error(f"Exception encountered while solving the optimal control problem.")
+    st.error("Exception encountered while solving the optimal control problem.")
     st.exception(exc)
-    st.info("Try changing the options to make the optimal control problem solvable. Common sources of infeasibility are overly restrictive constraints and overly challenging initial states.")
+    st.info(
+        "Try changing the options to make the optimal control problem solvable. Common sources of infeasibility are"
+        " overly restrictive constraints and overly challenging initial states."
+    )
 else:
     state_fields = ["position", "velocity", "angle", "angular_velocity"]
     action_fields = ["force"]
     all_fields = state_fields + action_fields
 
     with st.expander("Results", expanded=True):
-        st.header("Results", anchor=False)
-
-        plot_cols = st.columns(2)
+        plot_cols = st.columns(3)
 
         with plot_cols[0]:
             st.subheader("Time-series Plot", anchor=False)
@@ -353,14 +391,14 @@ else:
         WIDTH, HEIGHT = 800, 600
         BACKGROUND_COLOR = (255, 255, 255)
 
-        # Color palette        
+        # Color palette
         # https://coolors.co/palette/154274-1368C5-4EA7BA-BEE9E7-F68B3F
         DARK_BLUE = [21, 66, 116]  # 154274
-        MEDIUM_BLUE = [19, 104, 197] # 1368C5
+        MEDIUM_BLUE = [19, 104, 197]  # 1368C5
         LIGHT_BLUE = [78, 167, 186]  # 4EA7BA
         PALE_BLUE = [190, 233, 231]  # BEE9E7
         ORANGE = [246, 139, 63]  # F68B3F
-        
+
         BORDER_COLOR = DARK_BLUE
         CART_COLOR = MEDIUM_BLUE
         POLE_COLOR = LIGHT_BLUE
@@ -536,7 +574,6 @@ else:
             if animation_options["show_constraint_guidelines"]:
                 gfxdraw.vline(surface, pos_min_screen_coords, cart_top, cart_bot, CONSTRAINT_COLOR + [127])
                 gfxdraw.vline(surface, pos_max_screen_coords, cart_top, cart_bot, CONSTRAINT_COLOR + [127])
-                
 
             if animation_options["show_target_state"]:
                 # Draw the ghosted target state
@@ -548,10 +585,33 @@ else:
 
             # Render the text overlay
             if animation_options["show_text_overlay"]:
-                fields = ["Time", "Position", "Velocity", "Angle", "Angular Velocity", "Force",]
-                values = [time, cart_position, cart_velocity, pole_angle, pole_angular_velocity, force,]
-                units = ["s", "m", "m/s", "rad", "rad/s", "N",]
-                text_overlay_strs = [pretty_str_float_field(field, value, unit) for field, value, unit in zip(fields, values, units)]
+                fields = [
+                    "Time",
+                    "Position",
+                    "Velocity",
+                    "Angle",
+                    "Angular Velocity",
+                    "Force",
+                ]
+                values = [
+                    time,
+                    cart_position,
+                    cart_velocity,
+                    pole_angle,
+                    pole_angular_velocity,
+                    force,
+                ]
+                units = [
+                    "s",
+                    "m",
+                    "m/s",
+                    "rad",
+                    "rad/s",
+                    "N",
+                ]
+                text_overlay_strs = [
+                    pretty_str_float_field(field, value, unit) for field, value, unit in zip(fields, values, units)
+                ]
                 for i, s in enumerate(text_overlay_strs):
                     label = font.render(s, 1, (0, 0, 0))
                     surface.blit(label, (10, 10 + i * 20))
@@ -567,29 +627,28 @@ else:
 
         @st.cache_data(max_entries=10)
         def animate(ani_state_action_time_series, target_state, fps, animation_options, constraint_options):
+            duration_single = 1000 // fps  # this is the duration of each frame in milliseconds
             with st.spinner("Creating frames..."):
                 frames = [
                     create_frame(time, state, action, target_state, animation_options, constraint_options)
                     for time, state, action in ani_state_action_time_series
                 ]
+                durations = [duration_single] * len(frames)
             if animation_options["duration_end_hold_sec"] > 0:
-                num_frames_end_hold = int(fps * animation_options["duration_end_hold_sec"])
-                frames += [frames[-1]] * num_frames_end_hold
-            # target fps = 50 Hz
-            # https://wunkolo.github.io/post/2020/02/buttery-smooth-10fps/
-            duration = 1000 // fps  # this is the duration of each frame in milliseconds
+                # Add a repeat of the last frame
+                frames += [frames[-1]]
+                durations += [1000 * animation_options["duration_end_hold_sec"]]
             with st.spinner("Saving animation..."):
                 # Create an in-memory byte stream
                 byte_stream = io.BytesIO()
                 frames[0].save(
-                    byte_stream, format="GIF", save_all=True, append_images=frames[1:], loop=0, duration=duration
+                    byte_stream, format="GIF", save_all=True, append_images=frames[1:], loop=0, duration=durations
                 )
                 # Go to the start of the byte stream
                 byte_stream.seek(0)
             return byte_stream
 
-        plot_cols = st.columns(2)
-        with plot_cols[0]:
+        with plot_cols[2]:
             st.subheader("Animation", anchor=False)
             if show_animation:
                 # Use linear interpolation to resample the signals at the fps for animation
@@ -604,7 +663,9 @@ else:
                 ]
                 target_state = xT
 
-                animation = animate(ani_state_action_time_series, target_state, ani_fps, animation_options, constraint_options)
+                animation = animate(
+                    ani_state_action_time_series, target_state, ani_fps, animation_options, constraint_options
+                )
                 st.image(animation, use_column_width=True)
             else:
                 st.info('Enable "Show Animation" in the options to see an animation here.', icon="i")
