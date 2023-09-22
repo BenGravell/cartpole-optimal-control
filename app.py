@@ -62,7 +62,7 @@ def cartpole_dynamics(state, action, params):
     return casadi.vertcat(x_dot, x_dot_dot, theta_dot, theta_dot_dot)
 
 
-st.title("Cartpole Optimal Control")
+st.title("🛒💈🎛️ Cartpole Optimal Control")
 
 with st.expander("Description & Explanation", expanded=False):
     st.header("Summary")
@@ -121,7 +121,7 @@ with st.expander("Options", expanded=False):
             gs = st.slider("Gravitational Acceleration (G's)", min_value=0.0, max_value=4.0, value=1.0, step=0.1)
             gravity = 9.81 * gs
             mass_cart = st.slider("Mass of cart (kg)", min_value=0.0, max_value=2.0, value=1.0, step=0.1)
-            mass_pole = st.slider("Mass of pole (kg)", min_value=0.0, max_value=2.0, value=1.0, step=0.1)
+            mass_pole = st.slider("Mass of pole (kg)", min_value=0.0, max_value=2.0, value=0.8, step=0.1)
             length_pole = st.slider("Length of pole (m)", min_value=0.4, max_value=1.2, value=1.0, step=0.1)
             model_params = {
                 "gravity": gravity,
@@ -164,16 +164,14 @@ with st.expander("Options", expanded=False):
             show_animation = st.toggle("Show Animation", value=True)
             show_force = st.toggle("Show Force Arrow", value=True)
             show_target_state = st.toggle("Show Target State Outline", value=True)
-            show_guidelines = st.toggle("Show Cart Rail Guideline", value=True)
-            show_constraint_guidelines = st.toggle("Show Position Constraint Guidelines", value=True)
+            show_constraint_box = st.toggle("Show Cart Constraint Outline", value=True)
             show_text_overlay = st.toggle("Show Text Overlay", value=True)
-            show_border = st.toggle("Show Border", value=True)
+            show_border = st.toggle("Show Border", value=False)
 
             animation_options = {
                 "show_force": show_force,
                 "show_target_state": show_target_state,
-                "show_guidelines": show_guidelines,
-                "show_constraint_guidelines": show_constraint_guidelines,
+                "show_constraint_box": show_constraint_box,
                 "show_text_overlay": show_text_overlay,
                 "show_border": show_border,
                 "duration_end_hold_sec": duration_end_hold_sec,
@@ -251,8 +249,11 @@ with st.expander("Options", expanded=False):
 
         with tabs[tab_names.index("Solver")]:
             max_iter = st.select_slider(
-                "Maximum Iterations for IPOPT Solver", options=[10, 100, 1000, 10000], value=1000
+                "Maximum Iterations for IPOPT Solver",
+                options=[10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000],
+                value=100,
             )
+            solver_options = {"max_iter": max_iter}
 
         with button_container:
             st.form_submit_button("Update Options", type="primary")
@@ -270,7 +271,7 @@ penalty_func_map = {"square": casadi_square, "smooth_abs": casadi_smooth_abs}
 
 
 @st.cache_data(max_entries=10, show_spinner=False)
-def solve_optimal_control_problem(x0, xT, N, T, model_params, penalty_options, constraint_options):
+def solve_optimal_control_problem(x0, xT, N, T, model_params, penalty_options, constraint_options, solver_options):
     # An optimal control problem (OCP),
     # solved with direct multiple-shooting.
     # For more information see: https://web.casadi.org/blog/ocp/
@@ -334,8 +335,8 @@ def solve_optimal_control_problem(x0, xT, N, T, model_params, penalty_options, c
     opti.set_initial(U[0, :], 0)
 
     # ---- solve NLP              ------
-    solver_options = {"ipopt": {"max_iter": max_iter}}
-    opti.solver("ipopt", solver_options)  # set numerical backend
+    opti_solver_options = {"ipopt": {"max_iter": solver_options["max_iter"]}}
+    opti.solver("ipopt", opti_solver_options)  # set numerical backend
     try:
         sol = opti.solve()  # actual solve
     except RuntimeError as exc:
@@ -353,7 +354,9 @@ def solve_optimal_control_problem(x0, xT, N, T, model_params, penalty_options, c
 
 
 with st.spinner("Solving optimal control problem..."):
-    ocp_df, exc = solve_optimal_control_problem(x0, xT, N, T, model_params, penalty_options, constraint_options)
+    ocp_df, exc = solve_optimal_control_problem(
+        x0, xT, N, T, model_params, penalty_options, constraint_options, solver_options
+    )
 # st.write(ocp_df)
 
 if exc is not None:
@@ -369,14 +372,14 @@ else:
     all_fields = state_fields + action_fields
 
     with st.expander("Results", expanded=True):
-        plot_cols = st.columns(3)
+        animation_container = st.container()
+        plot_container = st.container()
 
-        with plot_cols[0]:
+        with plot_container:
             st.subheader("Time-series Plot", anchor=False)
             fig = px.line(ocp_df, x="time", y=all_fields)
             st.plotly_chart(fig, use_container_width=True)
 
-        with plot_cols[1]:
             st.subheader("Phase-space Plot", anchor=False)
             subcols = st.columns(2)
             with subcols[0]:
@@ -404,7 +407,6 @@ else:
         POLE_COLOR = LIGHT_BLUE
         AXLE_COLOR = PALE_BLUE
         FORCE_COLOR = ORANGE
-        GUIDELINE_COLOR = DARK_BLUE
         CONSTRAINT_COLOR = DARK_BLUE
 
         pygame.init()
@@ -566,12 +568,11 @@ else:
             cart_top = cart_y - int(cart_height / 2)
             cart_bot = cart_y + int(cart_height / 2)
 
-            if animation_options["show_guidelines"]:
-                # Draw guidelines
-                gfxdraw.hline(surface, pos_min_screen_coords, pos_max_screen_coords, cart_top, GUIDELINE_COLOR + [127])
-                gfxdraw.hline(surface, pos_min_screen_coords, pos_max_screen_coords, cart_bot, GUIDELINE_COLOR + [127])
+            if animation_options["show_constraint_box"]:
+                # Draw constraint box
+                gfxdraw.hline(surface, pos_min_screen_coords, pos_max_screen_coords, cart_top, CONSTRAINT_COLOR + [127])
+                gfxdraw.hline(surface, pos_min_screen_coords, pos_max_screen_coords, cart_bot, CONSTRAINT_COLOR + [127])
 
-            if animation_options["show_constraint_guidelines"]:
                 gfxdraw.vline(surface, pos_min_screen_coords, cart_top, cart_bot, CONSTRAINT_COLOR + [127])
                 gfxdraw.vline(surface, pos_max_screen_coords, cart_top, cart_bot, CONSTRAINT_COLOR + [127])
 
@@ -648,8 +649,9 @@ else:
                 byte_stream.seek(0)
             return byte_stream
 
-        with plot_cols[2]:
+        with animation_container:
             st.subheader("Animation", anchor=False)
+
             if show_animation:
                 # Use linear interpolation to resample the signals at the fps for animation
                 N_ani = int(ani_fps * T)
@@ -666,6 +668,8 @@ else:
                 animation = animate(
                     ani_state_action_time_series, target_state, ani_fps, animation_options, constraint_options
                 )
-                st.image(animation, use_column_width=True)
+                cols = st.columns([2, 4, 2])
+                with cols[1]:
+                    st.image(animation, use_column_width=True)
             else:
-                st.info('Enable "Show Animation" in the options to see an animation here.', icon="i")
+                st.info('Enable "Show Animation" in the options to see an animation here.', icon="🛒")
