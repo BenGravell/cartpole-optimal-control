@@ -161,6 +161,15 @@ with st.expander("Options", expanded=False):
                     " 50 FPS due to technical limitations of GIFs."
                 ),
             )
+            playback_rate_scale = st.select_slider(
+                "Playback Rate Scale",
+                options=[0.1, 0.25, 0.5, 1.0],
+                value=1.0,
+                help=(
+                    "Use this to play back the animation more slowly than real-time to give yourself more time to see"
+                    " what is happening."
+                ),
+            )
             show_animation = st.toggle("Show Animation", value=True)
             show_force = st.toggle("Show Force Arrow", value=True)
             show_target_state = st.toggle("Show Target State Outline", value=True)
@@ -175,6 +184,7 @@ with st.expander("Options", expanded=False):
                 "show_text_overlay": show_text_overlay,
                 "show_border": show_border,
                 "duration_end_hold_sec": duration_end_hold_sec,
+                "playback_rate_scale": playback_rate_scale,
             }
 
         with tabs[tab_names.index("Initial States")]:
@@ -628,7 +638,9 @@ else:
 
         @st.cache_data(max_entries=10)
         def animate(ani_state_action_time_series, target_state, fps, animation_options, constraint_options):
-            duration_single = 1000 // fps  # this is the duration of each frame in milliseconds
+            duration_single = int(
+                (1000 / fps) / (animation_options["playback_rate_scale"])
+            )  # this is the duration of each frame in milliseconds
             with st.spinner("Creating frames..."):
                 frames = [
                     create_frame(time, state, action, target_state, animation_options, constraint_options)
