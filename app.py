@@ -1,74 +1,24 @@
-from dataclasses import dataclass
-from typing import Any
-import io
-
 import numpy as np
 import pandas as pd
-import casadi
-
-import pygame
-from pygame import gfxdraw
-from PIL import Image
 
 import streamlit as st
 import plotly.express as px
 
-
-@dataclass
-class MinMax:
-    """Class to hold min and max constraint values."""
-
-    min: Any
-    max: Any
+import app_options as ao
+import constants
+import optimal_control as oc
+import animation as ani
 
 
 st.set_page_config(layout="wide")
-
-
-# Based on http://underactuated.mit.edu/acrobot.html
-def cartpole_dynamics(state, action, params):
-    gravity, mass_cart, mass_pole, length_pole = (
-        params["gravity"],
-        params["mass_cart"],
-        params["mass_pole"],
-        params["length_pole"],
-    )
-
-    # Extract each element of the state with a human-radable alias
-    _, x_dot, theta, theta_dot = state[0], state[1], state[2], state[3]
-    # Extract each element of the action with a human-radable alias
-    f_x = action
-
-    # Compute intermediate quantities
-    sin_theta = casadi.sin(theta)
-    cos_theta = casadi.cos(theta)
-
-    denom_1 = mass_cart + mass_pole * sin_theta * sin_theta
-
-    denom_x_dot_dot = 1.0 / denom_1
-    denom_theta_dot_dot = 1.0 / (length_pole * denom_1)
-
-    numer_x_dot_dot = f_x + mass_pole * sin_theta * (length_pole * theta_dot * theta_dot + gravity * cos_theta)
-    numer_theta_dot_dot = (
-        -f_x * cos_theta
-        - mass_pole * length_pole * theta_dot * theta_dot * cos_theta * sin_theta
-        - (mass_cart + mass_pole) * gravity * sin_theta
-    )
-
-    # Compute derivatives of state with respect to time
-    x_dot_dot = numer_x_dot_dot / denom_x_dot_dot
-    theta_dot_dot = numer_theta_dot_dot / denom_theta_dot_dot
-
-    return casadi.vertcat(x_dot, x_dot_dot, theta_dot, theta_dot_dot)
-
-
 st.title("🛒💈🎛️ Cartpole Optimal Control")
 
-with st.expander("Description & Explanation", expanded=False):
+
+def execute_ui_section_description():
     st.header("Summary")
     st.write(
         "This app demonstrates optimal control of a cartpole system. The task is to apply a sequence of inputs to drive"
-        " the system from the initial state to the target terminal state while minimizing an objective function."
+        " the system from the initial state to the terminal state while minimizing an objective function."
     )
 
     st.header("Optimal Control")
@@ -97,591 +47,108 @@ with st.expander("Description & Explanation", expanded=False):
         " environment](https://github.com/Farama-Foundation/Gymnasium/blob/main/gymnasium/envs/classic_control/cartpole.py)."
     )
 
-# Dimensions
-n = 4  # number of states
-m = 1  # number of actions
+
+def ani_df_from_ocp_df(ocp_df: pd.DataFrame, app_options: ao.AppOptions):
+    """Use linear interpolation to resample the signals at the fps for animation."""
+    num_intervals_ani = app_options.animation_options.fps * app_options.simulation_options.duration
+    ani_df = pd.DataFrame({"time": np.arange(num_intervals_ani + 1) / app_options.animation_options.fps})
+
+    for field in constants.ALL_FIELDS:
+        ani_df[field] = np.interp(ani_df.time, ocp_df.time, ocp_df[field])
+
+    return ani_df
 
 
-with st.expander("Options", expanded=False):
-    with st.form("options_form"):
-        button_container = st.container()
+def state_action_time_series_from_df(df: pd.DataFrame) -> list[tuple[float, np.ndarray, np.ndarray]]:
+    """Convert a DataFrame to a list of time-state-action tuples."""
+    return [
+        (t, s, a) for t, s, a in zip(df.time, df[constants.STATE_FIELDS].values, df[constants.ACTION_FIELDS].values)
+    ]
 
-        tab_names = [
-            "Model Parameters",
-            "Simulation",
-            "Animation",
-            "Initial States",
-            "Constraints",
-            "Objective",
-            "Solver",
+
+def execute_ui_section_animation(ocp_df: pd.DataFrame, app_options: ao.AppOptions):
+    if app_options.animation_options.show_animation:
+        ani_df = ani_df_from_ocp_df(ocp_df, app_options)
+        ani_state_action_time_series = [
+            (t, s, a)
+            for t, s, a in zip(
+                ani_df.time, ani_df[constants.STATE_FIELDS].values, ani_df[constants.ACTION_FIELDS].values
+            )
         ]
-        tabs = st.tabs(tab_names)
+        animation_byte_stream = ani.animate(ani_state_action_time_series, app_options)
 
-        with tabs[tab_names.index("Model Parameters")]:
-            gs = st.slider("Gravitational Acceleration (G's)", min_value=0.0, max_value=4.0, value=1.0, step=0.1)
-            gravity = 9.81 * gs
-            mass_cart = st.slider("Mass of cart (kg)", min_value=0.0, max_value=2.0, value=1.0, step=0.1)
-            mass_pole = st.slider("Mass of pole (kg)", min_value=0.0, max_value=2.0, value=0.8, step=0.1)
-            length_pole = st.slider("Length of pole (m)", min_value=0.4, max_value=1.2, value=1.0, step=0.1)
-            model_params = {
-                "gravity": gravity,
-                "mass_cart": mass_cart,
-                "mass_pole": mass_pole,
-                "length_pole": length_pole,
-            }
+        # Center the animation horizontally on the page, leaving small buffer columns on either side
+        cols = st.columns([2, 4, 2])
+        with cols[1]:
+            st.image(animation_byte_stream, use_column_width=True)
+    else:
+        st.info('Enable "Show Animation" in the options to see an animation here.', icon="🛒")
 
-        with tabs[tab_names.index("Simulation")]:
-            T = st.slider("Simulation Duration (seconds)", min_value=1, max_value=20, value=5, step=1)
-            sim_fps = st.select_slider(
-                "Simulation Frame Rate (frames per second)",
-                options=[5, 10, 25, 50],
-                value=25,
-                help=(
-                    "This controls the rate at which the dynamics evolve, i.e how frequently states and actions are"
-                    " updated. Larger values will result in a larger optimal control problem that takes longer to"
-                    " solve, but will be more precise."
-                ),
+
+def execute_ui_section_results(ocp_df, app_options):
+    animation_container = st.container()
+    plot_container = st.container()
+
+    with plot_container:
+        st.subheader("Time-series Plot", anchor=False)
+        fig = px.line(ocp_df, x="time", y=constants.ALL_FIELDS)
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("Phase-space Plot", anchor=False)
+        subcols = st.columns(2)
+        with subcols[0]:
+            x_field = st.selectbox(
+                "x-axis field", options=constants.ALL_FIELDS, index=constants.ALL_FIELDS.index("angle")
             )
-            N = int(sim_fps * T)  # Number of control intervals
-
-        with tabs[tab_names.index("Animation")]:
-            duration_end_hold_sec = st.slider(
-                "Animation Duration Pause at End (sec)", min_value=0, max_value=5, value=1
+        with subcols[1]:
+            y_field = st.selectbox(
+                "y-axis field", options=constants.ALL_FIELDS, index=constants.ALL_FIELDS.index("angular_velocity")
             )
-            # 50 fps is the max practical frame rate for GIF
-            # https://wunkolo.github.io/post/2020/02/buttery-smooth-10fps/
-            ani_fps = st.select_slider(
-                "Animation Frame Rate (frames per second)",
-                options=[5, 10, 25, 50],
-                value=50,
-                help=(
-                    "This controls the rate at which animation frames are displayed. Simulation result data is linearly"
-                    " interpolated from simulation time to animation time. Larver values will result in more frames"
-                    " that take longer to render and save, but will play back more smoothly. There is a hard limit at"
-                    " 50 FPS due to technical limitations of GIFs."
-                ),
-            )
-            playback_rate_scale = st.select_slider(
-                "Playback Rate Scale",
-                options=[0.1, 0.25, 0.5, 1.0],
-                value=1.0,
-                help=(
-                    "Use this to play back the animation more slowly than real-time to give yourself more time to see"
-                    " what is happening."
-                ),
-            )
-            show_animation = st.toggle("Show Animation", value=True)
-            show_force = st.toggle("Show Force Arrow", value=True)
-            show_target_state = st.toggle("Show Target State Outline", value=True)
-            show_constraint_box = st.toggle("Show Cart Constraint Outline", value=True)
-            show_text_overlay = st.toggle("Show Text Overlay", value=True)
-            show_border = st.toggle("Show Border", value=False)
-
-            animation_options = {
-                "show_force": show_force,
-                "show_target_state": show_target_state,
-                "show_constraint_box": show_constraint_box,
-                "show_text_overlay": show_text_overlay,
-                "show_border": show_border,
-                "duration_end_hold_sec": duration_end_hold_sec,
-                "playback_rate_scale": playback_rate_scale,
-            }
-
-        with tabs[tab_names.index("Initial States")]:
-            position_0 = st.slider("Position (m)", min_value=-1.5, max_value=1.5, value=0.0, step=0.1)
-            veloicty_0 = st.slider("Velocity (m/s)", min_value=-4.0, max_value=4.0, value=0.0, step=0.1)
-            angle_0_deg = st.slider("Angle (deg)", min_value=-180, max_value=180, value=0, step=10)
-            angle_0 = angle_0_deg * (2 * np.pi / 360)
-            angular_velocity_0_rps = st.slider(
-                "Angular Velocity (rev/s)", min_value=-2.0, max_value=2.0, value=0.0, step=0.1
-            )
-            angular_velocity_0 = angular_velocity_0_rps * (2 * np.pi)
-
-            # Initial and terminal states
-            x0 = np.array([position_0, veloicty_0, angle_0, angular_velocity_0])  # Slight angle to the pole
-
-            # TODO handle off by 2*pi by encoding end points using sin, cos representation
-            xT = np.array([0, 0, np.pi, 0])  # Straight up, centered
-
-        with tabs[tab_names.index("Constraints")]:
-            position_min, position_max = st.slider(
-                "Position Constraint (m)", min_value=-1.5, max_value=1.5, value=(-1.0, 1.0), step=0.1
-            )
-            velocity_min, velocity_max = st.slider(
-                "Velocity Constraint (m/s)", min_value=-20.0, max_value=20.0, value=(-15.0, 15.0), step=0.5
-            )
-            angle_min_deg, angle_max_deg = st.slider(
-                "Angle Constraint (deg)", min_value=-360, max_value=360, value=(-270, 270), step=10
-            )
-            angular_velocity_min, angular_velocity_max = st.slider(
-                "Angular Velocity Constraint (rad/s)", min_value=-40, max_value=40, value=(-20, 20), step=1
-            )
-
-            angle_min, angle_max = angle_min_deg * (2 * np.pi / 360), angle_max_deg * (2 * np.pi / 360)
-
-            force_min, force_max = st.slider(
-                "Force Constraint (N)", min_value=-50, max_value=50, value=(-30, 30), step=5
-            )
-
-            constraint_options = {
-                "position": MinMax(position_min, position_max),
-                "velocity": MinMax(velocity_min, velocity_max),
-                "angle": MinMax(angle_min, angle_max),
-                "angular_velocity": MinMax(angular_velocity_min, angular_velocity_max),
-                "force": MinMax(force_min, force_max),
-            }
-
-        with tabs[tab_names.index("Objective")]:
-            position_penalty = st.slider("Position Penalty", min_value=0, max_value=10, value=1, step=1)
-            velocity_penalty = st.slider("Velocity Penalty", min_value=0, max_value=10, value=2, step=1)
-            angle_penalty = st.slider("Angle Penalty", min_value=0, max_value=10, value=1, step=1)
-            angular_velocity_penalty = st.slider("Angular Velocity Penalty", min_value=0, max_value=10, value=8, step=1)
-            force_penalty = st.slider("Force Penalty", min_value=0, max_value=10, value=4, step=1)
-            penalty_function = st.selectbox(
-                "Penalty Function",
-                options=["square", "smooth_abs"],
-                help=(
-                    "For each element in the sequence, the penalty function specified here is applied and the result is"
-                    " added to the objective. The `square` function computes the square of an element. The `smooth_abs`"
-                    " function computes `sqrt(square(x) + eps)` where `eps` is a small number. Generally, the"
-                    " `smooth_abs` function is much more expensive to use, since it leads to a more complicated and"
-                    " less well-conditioned optimization problem."
-                ),
-            )
-            penalty_options = {
-                "position": position_penalty,
-                "velocity": velocity_penalty,
-                "angle": angle_penalty,
-                "angular_velocity": angular_velocity_penalty,
-                "force": force_penalty,
-                "penalty_function": penalty_function,
-            }
-
-        with tabs[tab_names.index("Solver")]:
-            max_iter = st.select_slider(
-                "Maximum Iterations for IPOPT Solver",
-                options=[10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000],
-                value=100,
-            )
-            solver_options = {"max_iter": max_iter}
-
-        with button_container:
-            st.form_submit_button("Update Options", type="primary")
-
-
-def casadi_square(x):
-    return casadi.dot(x, x)
-
-
-def casadi_smooth_abs(x, eps=0.1):
-    return casadi.sqrt(casadi_square(x) + eps)
-
-
-penalty_func_map = {"square": casadi_square, "smooth_abs": casadi_smooth_abs}
-
-
-@st.cache_data(max_entries=10, show_spinner=False)
-def solve_optimal_control_problem(x0, xT, N, T, model_params, penalty_options, constraint_options, solver_options):
-    # An optimal control problem (OCP),
-    # solved with direct multiple-shooting.
-    # For more information see: https://web.casadi.org/blog/ocp/
-
-    opti = casadi.Opti()  # Optimization problem
-
-    # ---- decision variables ---------
-    X = opti.variable(n, N + 1)  # state trajectory
-    U = opti.variable(m, N)  # control trajectory (throttle)
-    # T = opti.variable()      # final time
-
-    state_fields = ["position", "velocity", "angle", "angular_velocity"]
-    action_fields = ["force"]
-
-    state_field_vars = {field: X[i, :] for i, field, in enumerate(state_fields)}
-    action_field_vars = {field: U[i, :] for i, field in enumerate(action_fields)}
-    # all_field_vars = {**state_field_vars, **action_field_vars}
-
-    # ---- objective          ---------
-    objective = 0
-    penalty_func = penalty_func_map[penalty_options["penalty_function"]]
-    for i, field in enumerate(state_fields):
-        delta_series = state_field_vars[field] - xT[i]
-        objective += penalty_options[field] * penalty_func(delta_series)
-    for field in action_fields:
-        series = action_field_vars[field]
-        objective += penalty_options[field] * penalty_func(series)
-    opti.minimize(objective)
-
-    # ---- dynamic constraints --------
-    def f(x, u):
-        return cartpole_dynamics(x, u, model_params)  # dx/dt = f(x,u)
-
-    dt = T / N  # length of a control interval
-    for k in range(N):  # loop over control intervals
-        # Runge-Kutta 4 integration
-        k1 = f(X[:, k], U[:, k])
-        k2 = f(X[:, k] + dt / 2 * k1, U[:, k])
-        k3 = f(X[:, k] + dt / 2 * k2, U[:, k])
-        k4 = f(X[:, k] + dt * k3, U[:, k])
-        x_next = X[:, k] + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
-        opti.subject_to(X[:, k + 1] == x_next)  # close the gaps
-
-    # # ---- path constraints -----------
-    for i, field in enumerate(state_fields):
-        opti.subject_to(opti.bounded(constraint_options[field].min, X[i, :], constraint_options[field].max))
-    for i, field in enumerate(action_fields):
-        opti.subject_to(opti.bounded(constraint_options[field].min, U[i, :], constraint_options[field].max))
-
-    # ---- boundary conditions --------
-    opti.subject_to(X[:, 0] == x0)  # initial state
-    opti.subject_to(X[:, -1] == xT)  # terminal state
-    # opti.subject_to(casadi.sin(X[2, -1]) == 0)
-    # opti.subject_to(casadi.cos(X[2, -1]) == -0.9)
-
-    # ---- initial values for solver ---
-    opti.set_initial(X[0, :], np.linspace(x0[0], xT[0], N + 1))
-    opti.set_initial(X[1, :], np.linspace(x0[1], xT[1], N + 1))
-    opti.set_initial(X[2, :], np.linspace(x0[2], xT[2], N + 1))
-    opti.set_initial(X[3, :], np.linspace(x0[3], xT[3], N + 1))
-    opti.set_initial(U[0, :], 0)
-
-    # ---- solve NLP              ------
-    opti_solver_options = {"ipopt": {"max_iter": solver_options["max_iter"]}}
-    opti.solver("ipopt", opti_solver_options)  # set numerical backend
-    try:
-        sol = opti.solve()  # actual solve
-    except RuntimeError as exc:
-        return None, exc
-
-    state_out = {field: sol.value(state_field_vars[field]) for field in state_fields}
-    ocp_df = pd.DataFrame.from_dict(state_out, orient="columns")
-    ocp_df["time"] = np.round(
-        np.arange(N + 1) * dt, 9
-    )  # sub-nanosecond time resolution not needed, mitigate float rounding issues
-
-    action_out = {field: sol.value(action_field_vars[field]) for field in action_fields}
-    ocp_df["force"] = action_out["force"].tolist() + [0]
-    return ocp_df, None
-
-
-with st.spinner("Solving optimal control problem..."):
-    ocp_df, exc = solve_optimal_control_problem(
-        x0, xT, N, T, model_params, penalty_options, constraint_options, solver_options
-    )
-# st.write(ocp_df)
-
-if exc is not None:
-    st.error("Exception encountered while solving the optimal control problem.")
-    st.exception(exc)
-    st.info(
-        "Try changing the options to make the optimal control problem solvable. Common sources of infeasibility are"
-        " overly restrictive constraints and overly challenging initial states."
-    )
-else:
-    state_fields = ["position", "velocity", "angle", "angular_velocity"]
-    action_fields = ["force"]
-    all_fields = state_fields + action_fields
-
-    with st.expander("Results", expanded=True):
-        animation_container = st.container()
-        plot_container = st.container()
-
-        with plot_container:
-            st.subheader("Time-series Plot", anchor=False)
-            fig = px.line(ocp_df, x="time", y=all_fields)
-            st.plotly_chart(fig, use_container_width=True)
-
-            st.subheader("Phase-space Plot", anchor=False)
-            subcols = st.columns(2)
-            with subcols[0]:
-                x_field = st.selectbox("x-axis field", options=all_fields, index=all_fields.index("angle"))
-            with subcols[1]:
-                y_field = st.selectbox("y-axis field", options=all_fields, index=all_fields.index("angular_velocity"))
-            fig = px.line(ocp_df, x=x_field, y=y_field, hover_data=["time"])
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Constants
-        world_width_normal_units = 2.0  # should be larger than position_min and position_max extents
-        WIDTH, HEIGHT = 800, 600
-        BACKGROUND_COLOR = (255, 255, 255)
-
-        # Color palette
-        # https://coolors.co/palette/154274-1368C5-4EA7BA-BEE9E7-F68B3F
-        DARK_BLUE = [21, 66, 116]  # 154274
-        MEDIUM_BLUE = [19, 104, 197]  # 1368C5
-        LIGHT_BLUE = [78, 167, 186]  # 4EA7BA
-        PALE_BLUE = [190, 233, 231]  # BEE9E7
-        ORANGE = [246, 139, 63]  # F68B3F
-
-        BORDER_COLOR = DARK_BLUE
-        CART_COLOR = MEDIUM_BLUE
-        POLE_COLOR = LIGHT_BLUE
-        AXLE_COLOR = PALE_BLUE
-        FORCE_COLOR = ORANGE
-        CONSTRAINT_COLOR = DARK_BLUE
-
-        pygame.init()
-
-        # Load a monospace font
-        font = pygame.font.Font("fonts/SpaceMono/SpaceMono-Regular.ttf", 16)
-
-        def pillgon(length, width, num_points_per_arc=10):
-            # Coordinates for a pill-shaped polygon that combines arc endcaps with straight edges
-            angles_top_arc = np.linspace(0, np.pi, num_points_per_arc)
-            angles_bot_arc = np.linspace(np.pi, 2 * np.pi, num_points_per_arc)
-
-            r = width / 2
-
-            x_top_arc = r * np.cos(angles_top_arc)
-            y_top_arc = r * np.sin(angles_top_arc) + length
-            coords_top_arc = [(x, y) for x, y in zip(x_top_arc, y_top_arc)]
-
-            x_bot_arc = r * np.cos(angles_bot_arc)
-            y_bot_arc = r * np.sin(angles_bot_arc)
-            coords_bot_arc = [(x, y) for x, y in zip(x_bot_arc, y_bot_arc)]
-
-            return coords_top_arc + coords_bot_arc
-
-        def arrowgon(a=0.1, b=0.7, c=0.1, d=0.3, scale=1.0):
-            # Coordinates for an arrow-shaped polygon that points to the left
-            sa = scale * a
-            sb = scale * b
-            sc = scale * c
-            sd = scale * d
-            coords = [
-                (0.0, 0.0),
-                (sd, sa + sc),
-                (sd, sa),
-                (sb + sd, sa),
-                (sb + sd, -sa),
-                (sd, -sa),
-                (sd, -(sa + sc)),
-            ]
-            return coords
-
-        def draw_cartpole(surface, state, action, ghost=False):
-            screen_width = WIDTH
-            screen_height = HEIGHT
-
-            world_width = world_width_normal_units * 2
-            scale = screen_width / world_width
-            pole_width = 30.0
-            pole_length = scale * model_params["length_pole"]
-            cart_width = 100.0
-            cart_height = 60.0
-
-            if state is None:
-                return None
-
-            cart_color = CART_COLOR
-            pole_color = POLE_COLOR
-            axle_color = AXLE_COLOR
-            force_color = FORCE_COLOR
-            if ghost:
-                opacity = 127  # transparent
-                cart_color = cart_color + [opacity]
-                pole_color = pole_color + [opacity]
-                axle_color = axle_color + [opacity]
-                force_color = force_color + [opacity]
-
-            # Draw cart
-            left, right, top, bottom = -cart_width / 2, cart_width / 2, cart_height / 2, -cart_height / 2
-            cart_x = int(state[0] * scale + screen_width / 2)  # MIDDLE OF CART
-            cart_y = int(screen_height / 2)  # MIDDLE OF CART
-            cart_coords = [(left, bottom), (left, top), (right, top), (right, bottom)]
-            cart_coords = [(c[0] + cart_x, c[1] + cart_y) for c in cart_coords]
-            gfxdraw.aapolygon(surface, cart_coords, cart_color)
-
-            if not ghost:
-                gfxdraw.filled_polygon(surface, cart_coords, cart_color)
-
-            # Draw pole
-            pole_coords_base = pillgon(pole_length, pole_width)
-            pole_coords = []
-            for coord in pole_coords_base:
-                coord = pygame.math.Vector2(coord).rotate_rad(-state[2])
-                coord = (coord[0] + cart_x, coord[1] + cart_y)
-                pole_coords.append(coord)
-            gfxdraw.aapolygon(surface, pole_coords, pole_color)
-            if not ghost:
-                gfxdraw.filled_polygon(surface, pole_coords, pole_color)
-
-            # Draw axle
-            axle_x = cart_x
-            axle_y = cart_y
-            axle_radius = int(0.5 * 0.5 * pole_width)
-            gfxdraw.aacircle(
-                surface,
-                axle_x,
-                axle_y,
-                axle_radius,
-                axle_color,
-            )
-            if not ghost:
-                gfxdraw.filled_circle(
-                    surface,
-                    axle_x,
-                    axle_y,
-                    axle_radius,
-                    axle_color,
-                )
-
-            # Draw force
-            if action is not None and not np.isnan(action):
-                force = action
-                force_coords_base = arrowgon(scale=-0.1 * (np.sign(force)) * (np.abs(force) ** 0.5) * scale)
-                force_coords = []
-                for coord in force_coords_base:
-                    coord = pygame.math.Vector2(coord)
-                    force_xshift = -np.sign(force) * ((cart_width / 2) + 10)
-                    coord = (coord[0] + cart_x + force_xshift, coord[1] + cart_y)
-                    force_coords.append(coord)
-                gfxdraw.aapolygon(surface, force_coords, force_color)
-                if not ghost:
-                    gfxdraw.filled_polygon(surface, force_coords, force_color)
-            return
-
-        def pretty_str_float_field(field, value, unit):
-            value_round = round(value, 2)
-            if abs(value_round) < 0.01:
-                value_round = 0.0
-            return f"{field:>16s}: {value_round:6.2f} {unit}"
-
-        def draw_scene(surface, time, state, action, target_state, animation_options, constraint_options):
-            cart_position, cart_velocity, pole_angle, pole_angular_velocity = state
-            (force,) = action
-
-            screen_width = WIDTH
-            screen_height = HEIGHT
-
-            world_width = world_width_normal_units * 2
-            scale = screen_width / world_width
-
-            cart_width = 100.0
-            cart_height = 60.0
-
-            cart_y = screen_height // 2  # MIDDLE OF CART
-
-            if animation_options["show_border"]:
-                # Draw the border
-                # Top border
-                pygame.gfxdraw.line(surface, 0, 0, WIDTH - 1, 0, BORDER_COLOR)
-                # Bottom border
-                pygame.gfxdraw.line(surface, 0, HEIGHT - 1, WIDTH - 1, HEIGHT - 1, BORDER_COLOR)
-                # Left border
-                pygame.gfxdraw.line(surface, 0, 0, 0, HEIGHT - 1, BORDER_COLOR)
-                # Right border
-                pygame.gfxdraw.line(surface, WIDTH - 1, 0, WIDTH - 1, HEIGHT - 1, BORDER_COLOR)
-
-            pos_min_screen_coords = int(constraint_options["position"].min * scale + screen_width / 2 - cart_width / 2)
-            pos_max_screen_coords = int(constraint_options["position"].max * scale + screen_width / 2 + cart_width / 2)
-
-            cart_top = cart_y - int(cart_height / 2)
-            cart_bot = cart_y + int(cart_height / 2)
-
-            if animation_options["show_constraint_box"]:
-                # Draw constraint box
-                gfxdraw.hline(surface, pos_min_screen_coords, pos_max_screen_coords, cart_top, CONSTRAINT_COLOR + [127])
-                gfxdraw.hline(surface, pos_min_screen_coords, pos_max_screen_coords, cart_bot, CONSTRAINT_COLOR + [127])
-
-                gfxdraw.vline(surface, pos_min_screen_coords, cart_top, cart_bot, CONSTRAINT_COLOR + [127])
-                gfxdraw.vline(surface, pos_max_screen_coords, cart_top, cart_bot, CONSTRAINT_COLOR + [127])
-
-            if animation_options["show_target_state"]:
-                # Draw the ghosted target state
-                draw_cartpole(surface, target_state, action=None, ghost=True)
-
-            # Draw the actual cartpole
-            action_for_draw = action if animation_options["show_force"] else None
-            draw_cartpole(surface, state, action_for_draw, ghost=False)
-
-            # Render the text overlay
-            if animation_options["show_text_overlay"]:
-                fields = [
-                    "Time",
-                    "Position",
-                    "Velocity",
-                    "Angle",
-                    "Angular Velocity",
-                    "Force",
-                ]
-                values = [
-                    time,
-                    cart_position,
-                    cart_velocity,
-                    pole_angle,
-                    pole_angular_velocity,
-                    force,
-                ]
-                units = [
-                    "s",
-                    "m",
-                    "m/s",
-                    "rad",
-                    "rad/s",
-                    "N",
-                ]
-                text_overlay_strs = [
-                    pretty_str_float_field(field, value, unit) for field, value, unit in zip(fields, values, units)
-                ]
-                for i, s in enumerate(text_overlay_strs):
-                    label = font.render(s, 1, (0, 0, 0))
-                    surface.blit(label, (10, 10 + i * 20))
-
-        def create_frame(time, state, action, target_state, animation_options, constraint_options):
-            surface = pygame.Surface((WIDTH, HEIGHT))
-            surface.fill(BACKGROUND_COLOR)
-            draw_scene(surface, time, state, action, target_state, animation_options, constraint_options)
-
-            size = surface.get_size()
-            data = pygame.image.tobytes(surface, "RGBA")
-            return Image.frombytes("RGBA", size, data)
-
-        @st.cache_data(max_entries=10)
-        def animate(ani_state_action_time_series, target_state, fps, animation_options, constraint_options):
-            duration_single = int(
-                (1000 / fps) / (animation_options["playback_rate_scale"])
-            )  # this is the duration of each frame in milliseconds
-            with st.spinner("Creating frames..."):
-                frames = [
-                    create_frame(time, state, action, target_state, animation_options, constraint_options)
-                    for time, state, action in ani_state_action_time_series
-                ]
-                durations = [duration_single] * len(frames)
-            if animation_options["duration_end_hold_sec"] > 0:
-                # Add a repeat of the last frame
-                frames += [frames[-1]]
-                durations += [1000 * animation_options["duration_end_hold_sec"]]
-            with st.spinner("Saving animation..."):
-                # Create an in-memory byte stream
-                byte_stream = io.BytesIO()
-                frames[0].save(
-                    byte_stream, format="GIF", save_all=True, append_images=frames[1:], loop=0, duration=durations
-                )
-                # Go to the start of the byte stream
-                byte_stream.seek(0)
-            return byte_stream
-
-        with animation_container:
-            st.subheader("Animation", anchor=False)
-
-            if show_animation:
-                # Use linear interpolation to resample the signals at the fps for animation
-                N_ani = int(ani_fps * T)
-                ani_df = pd.DataFrame({"time": np.arange(N_ani + 1) / ani_fps})
-
-                for field in all_fields:
-                    ani_df[field] = np.interp(ani_df.time, ocp_df.time, ocp_df[field])
-
-                ani_state_action_time_series = [
-                    (t, s, a) for t, s, a in zip(ani_df.time, ani_df[state_fields].values, ani_df[action_fields].values)
-                ]
-                target_state = xT
-
-                animation = animate(
-                    ani_state_action_time_series, target_state, ani_fps, animation_options, constraint_options
-                )
-                cols = st.columns([2, 4, 2])
-                with cols[1]:
-                    st.image(animation, use_column_width=True)
-            else:
-                st.info('Enable "Show Animation" in the options to see an animation here.', icon="🛒")
+        fig = px.line(ocp_df, x=x_field, y=y_field, hover_data=["time"])
+        st.plotly_chart(fig, use_container_width=True)
+
+    with animation_container:
+        st.subheader("Animation", anchor=False)
+        execute_ui_section_animation(ocp_df, app_options)
+
+
+def main():
+    with st.expander("Description & Explanation", expanded=False):
+        execute_ui_section_description()
+
+    with st.expander("Options", expanded=False):
+        with st.form("options_form"):
+            # Create a container for the form submit button first so it appears at the top,
+            # which ensures it does not move around as different tabs in get_app_options_from_ui() are opened
+            button_container = st.container()
+            # Get the options
+            app_options = ao.get_app_options_from_ui()
+            # Show the form submit button
+            with button_container:
+                st.form_submit_button("Update Options", type="primary")
+
+    with st.spinner("Solving optimal control problem..."):
+        ocp_df, exception = oc.solve_optimal_control_problem(
+            app_options.model_parameter_options,
+            app_options.simulation_options,
+            app_options.initial_state,
+            app_options.terminal_state,
+            app_options.constraint_options,
+            app_options.penalty_options,
+            app_options.solver_options,
+        )
+
+    if exception:
+        st.error("Exception encountered while solving the optimal control problem.")
+        st.exception(exception)
+        st.info(
+            "Try changing the options to make the optimal control problem solvable. Common sources of infeasibility"
+            " include overly restrictive constraints, overly challenging initial states, and too low solver maximum"
+            " iterations."
+        )
+    else:
+        with st.expander("Results", expanded=True):
+            execute_ui_section_results(ocp_df, app_options)
+
+
+main()
