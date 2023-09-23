@@ -11,3 +11,4 @@ pygame==2.5.1
 pre-commit==3.3.3
 black==23.7.0
 ruff==0.0.283
+pytest==7.4.2
