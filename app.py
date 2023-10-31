@@ -1,6 +1,3 @@
-import io
-from contextlib import redirect_stdout
-
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -63,7 +60,7 @@ def state_action_time_series_from_df(df: pd.DataFrame) -> list[tuple[float, np.n
 
 
 def execute_ui_section_animation(ocp_df: pd.DataFrame, app_options: ao.AppOptions):
-    show_animation = st.toggle("Show Animation")
+    show_animation = st.toggle("Show Animation", value=True)
     if show_animation:
         ani_df = ani_df_from_ocp_df(ocp_df, app_options)
         ani_state_action_time_series = [
@@ -130,24 +127,20 @@ def execute_ui_section_results(ocp_df, ocp_exception, ocp_captured_output, app_o
         execute_ui_section_animation(ocp_df, app_options)
 
 
-def results_callback(app_options):
+def solve_optimal_control_problem_in_ui(app_options):
     with st.spinner("Solving optimal control problem..."):
-        # Create a buffer to capture stdout
-        buffer = io.StringIO()
-
-        with redirect_stdout(buffer):
-            st.session_state.ocp_df, st.session_state.ocp_exception = oc.solve_optimal_control_problem(
-                app_options.model_parameter_options,
-                app_options.simulation_options,
-                app_options.initial_state,
-                app_options.terminal_state,
-                app_options.constraint_options,
-                app_options.penalty_options,
-                app_options.solver_options,
-            )
-
-        # Fetch the captured output
-        st.session_state.ocp_captured_output = buffer.getvalue()
+        df, exception, captured_output = oc.solve_optimal_control_problem(
+            app_options.model_parameter_options,
+            app_options.simulation_options,
+            app_options.initial_state,
+            app_options.terminal_state,
+            app_options.constraint_options,
+            app_options.penalty_options,
+            app_options.solver_options,
+        )
+    st.session_state.ocp_df = df
+    st.session_state.ocp_exception = exception
+    st.session_state.ocp_captured_output = captured_output
 
 
 def main():
@@ -178,8 +171,6 @@ def main():
                 st.form_submit_button("Update Options")
 
     with tabs[tab_names.index("Results")]:
-        st.button("Solve Optimal Control Problem", on_click=results_callback, args=[app_options])
-
         if st.session_state.get("ocp_exception") is None:
             st.session_state.ocp_exception = None
 
@@ -188,6 +179,10 @@ def main():
 
         if st.session_state.get("ocp_captured_output") is None:
             st.session_state.ocp_captured_output = None
+
+        solve = st.button("Solve Optimal Control Problem")
+        if solve:
+            solve_optimal_control_problem_in_ui(app_options)
 
         execute_ui_section_results(
             st.session_state.ocp_df, st.session_state.ocp_exception, st.session_state.ocp_captured_output, app_options

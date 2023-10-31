@@ -1,7 +1,9 @@
+import io
+from contextlib import redirect_stdout
+
 import numpy as np
 import pandas as pd
 import casadi
-
 import streamlit as st
 
 import constants
@@ -179,18 +181,29 @@ def solve_optimal_control_problem(
     opti_solver_options = {"ipopt": {"max_iter": solver_options.max_iter}}
     opti.solver("ipopt", opti_solver_options)  # set numerical backend
 
-    try:
-        sol = opti.solve()  # actual solve
-    except RuntimeError as exception:
-        return None, exception
+    exception = None
+    # Create a buffer to capture stdout
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        try:
+            # Do the actual solve
+            solution = opti.solve()
+        except RuntimeError:
+            solution = None
+    # Fetch the captured output
+    captured_output = buffer.getvalue()
 
-    state_out = {field: sol.value(state_field_vars[field]) for field in constants.STATE_FIELDS}
-    ocp_df = pd.DataFrame.from_dict(state_out, orient="columns")
-    ocp_df["time"] = np.round(
-        np.arange(N + 1) * dt, 9
-    )  # sub-nanosecond time resolution not needed, mitigate float rounding issues
+    def ocp_df_from_solution(solution):
+        state_out = {field: solution.value(state_field_vars[field]) for field in constants.STATE_FIELDS}
+        ocp_df = pd.DataFrame.from_dict(state_out, orient="columns")
+        ocp_df["time"] = np.round(
+            np.arange(N + 1) * dt, 9
+        )  # sub-nanosecond time resolution not needed, mitigate float rounding issues
 
-    action_out = {field: sol.value(action_field_vars[field]) for field in constants.ACTION_FIELDS}
-    ocp_df["force"] = action_out["force"].tolist() + [0]
+        action_out = {field: solution.value(action_field_vars[field]) for field in constants.ACTION_FIELDS}
+        ocp_df["force"] = action_out["force"].tolist() + [0]
+        return ocp_df
 
-    return ocp_df, None
+    ocp_df = None if solution is None else ocp_df_from_solution(solution)
+
+    return ocp_df, exception, captured_output
