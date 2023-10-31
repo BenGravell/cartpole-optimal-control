@@ -116,7 +116,7 @@ def get_model_parameter_options_from_ui():
 
 
 def get_simulation_options_from_ui():
-    duration = st.slider("Simulation Duration (seconds)", min_value=1, max_value=20, value=8, step=1)
+    duration = st.slider("Simulation Duration (seconds)", min_value=1, max_value=20, value=6, step=1)
     fps = st.select_slider(
         "Simulation Frame Rate (frames per second)",
         options=[5, 10, 25, 50],
