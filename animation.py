@@ -81,7 +81,14 @@ def draw_cartpole(surface, state, action, model_parameter_options: ao.ModelParam
     top = constants.CART_HEIGHT_PX // 2
     bottom = -constants.CART_HEIGHT_PX // 2
 
-    cart_x = int(state[0] * constants.WORLD_SCALE + constants.WORLD_CENTER_X_PX)  # MIDDLE OF CART
+    # Aliases
+    cart_position = state[constants.STATE_FIELDS.index("position")]
+    pole_angle = state[constants.STATE_FIELDS.index("angle")]
+
+    if cart_position is None:
+        return
+
+    cart_x = int(cart_position * constants.WORLD_SCALE + constants.WORLD_CENTER_X_PX)  # MIDDLE OF CART
     cart_y = constants.WORLD_CENTER_Y_PX  # MIDDLE OF CART
     cart_coords = [(left, bottom), (left, top), (right, top), (right, bottom)]
     cart_coords = [(c[0] + cart_x, c[1] + cart_y) for c in cart_coords]
@@ -90,16 +97,17 @@ def draw_cartpole(surface, state, action, model_parameter_options: ao.ModelParam
     if not ghost:
         gfxdraw.filled_polygon(surface, cart_coords, cart_color)
 
-    # Draw pole
-    pole_coords_base = pillgon(POLE_LENGTH_PX, constants.POLE_WIDTH_PX)
-    pole_coords = []
-    for coord in pole_coords_base:
-        coord = pygame.math.Vector2(coord).rotate_rad(-state[2])
-        coord = (coord[0] + cart_x, coord[1] + cart_y)
-        pole_coords.append(coord)
-    gfxdraw.aapolygon(surface, pole_coords, pole_color)
-    if not ghost:
-        gfxdraw.filled_polygon(surface, pole_coords, pole_color)
+    if pole_angle is not None:
+        # Draw pole
+        pole_coords_base = pillgon(POLE_LENGTH_PX, constants.POLE_WIDTH_PX)
+        pole_coords = []
+        for coord in pole_coords_base:
+            coord = pygame.math.Vector2(coord).rotate_rad(-pole_angle)
+            coord = (coord[0] + cart_x, coord[1] + cart_y)
+            pole_coords.append(coord)
+        gfxdraw.aapolygon(surface, pole_coords, pole_color)
+        if not ghost:
+            gfxdraw.filled_polygon(surface, pole_coords, pole_color)
 
     # Draw axle
     axle_x = cart_x

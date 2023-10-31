@@ -25,6 +25,8 @@ AXLE_RADIUS_PX = int(0.5 * POLE_RADIUS_PX)
 
 # Color palette
 # https://coolors.co/palette/154274-1368C5-4EA7BA-BEE9E7-F68B3F-FFFFFF
+# Generated using http://colormind.io/ and fixing the 2nd-to-last color as 1368C5,
+# the primaryColor in the streamlit theme in .streamlit/config.toml
 DARK_BLUE = [21, 66, 116]  # 154274
 MEDIUM_BLUE = [19, 104, 197]  # 1368C5
 LIGHT_BLUE = [78, 167, 186]  # 4EA7BA

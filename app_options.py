@@ -36,7 +36,6 @@ class SimulationOptions:
 
 @dataclass
 class AnimationOptions:
-    show_animation: bool
     show_force: bool
     show_terminal_state: bool
     show_constraint_box: bool
@@ -54,10 +53,10 @@ class AnimationOptions:
 
 @dataclass
 class DynamicsState:
-    position: float
-    velocity: float
-    angle: float
-    angular_velocity: float
+    position: float | None
+    velocity: float | None
+    angle: float | None
+    angular_velocity: float | None
     numpy: np.ndarray = field(init=False)
 
     def __post_init__(self):
@@ -117,11 +116,11 @@ def get_model_parameter_options_from_ui():
 
 
 def get_simulation_options_from_ui():
-    duration = st.slider("Simulation Duration (seconds)", min_value=1, max_value=20, value=5, step=1)
+    duration = st.slider("Simulation Duration (seconds)", min_value=1, max_value=20, value=8, step=1)
     fps = st.select_slider(
         "Simulation Frame Rate (frames per second)",
         options=[5, 10, 25, 50],
-        value=25,
+        value=10,
         help=(
             "This controls the rate at which the dynamics evolve, i.e how frequently states and actions are"
             " updated. Larger values will result in a larger optimal control problem that takes longer to"
@@ -132,43 +131,46 @@ def get_simulation_options_from_ui():
 
 
 def get_animation_options_from_ui():
-    duration_end_hold_sec = st.slider(
-        "Animation Duration Pause at End (sec)",
-        min_value=0,
-        max_value=5,
-        value=1,
-    )
-    # 50 fps is the max practical frame rate for GIF
-    # https://wunkolo.github.io/post/2020/02/buttery-smooth-10fps/
-    fps = st.select_slider(
-        "Animation Frame Rate (frames per second)",
-        options=[5, 10, 25, 50],
-        value=50,
-        help=(
-            "This controls the rate at which animation frames are displayed. Simulation result data is linearly"
-            " interpolated from simulation time to animation time. Larver values will result in more frames"
-            " that take longer to render and save, but will play back more smoothly. There is a hard limit at"
-            " 50 FPS due to technical limitations of GIFs."
-        ),
-    )
-    playback_rate_scale = st.select_slider(
-        "Playback Rate Scale",
-        options=[0.1, 0.25, 0.5, 1.0],
-        value=1.0,
-        help=(
-            "Use this to play back the animation more slowly than real-time to give yourself more time to see"
-            " what is happening."
-        ),
-    )
-    show_animation = st.toggle("Show Animation", value=True)
-    show_force = st.toggle("Show Force Arrow", value=True)
-    show_terminal_state = st.toggle("Show Terminal State Outline", value=True)
-    show_constraint_box = st.toggle("Show Cart Constraint Outline", value=True)
-    show_text_overlay = st.toggle("Show Text Overlay", value=True)
-    show_border = st.toggle("Show Border", value=False)
+    toggle_col, slider_col = st.columns([2, 2])
+
+    with slider_col:
+        duration_end_hold_sec = st.slider(
+            "Animation Duration Pause at End (sec)",
+            min_value=0,
+            max_value=5,
+            value=1,
+        )
+        # 50 fps is the max practical frame rate for GIF
+        # https://wunkolo.github.io/post/2020/02/buttery-smooth-10fps/
+        fps = st.select_slider(
+            "Animation Frame Rate (frames per second)",
+            options=[5, 10, 25, 50],
+            value=25,
+            help=(
+                "This controls the rate at which animation frames are displayed. Simulation result data is linearly"
+                " interpolated from simulation time to animation time. Larver values will result in more frames"
+                " that take longer to render and save, but will play back more smoothly. There is a hard limit at"
+                " 50 FPS due to technical limitations of GIFs."
+            ),
+        )
+        playback_rate_scale = st.select_slider(
+            "Playback Rate Scale",
+            options=[0.1, 0.25, 0.5, 1.0],
+            value=1.0,
+            help=(
+                "Use this to play back the animation more slowly than real-time to give yourself more time to see"
+                " what is happening."
+            ),
+        )
+
+    with toggle_col:
+        show_force = st.toggle("Show Force Arrow", value=True)
+        show_terminal_state = st.toggle("Show Terminal State Outline", value=True)
+        show_constraint_box = st.toggle("Show Cart Constraint Outline", value=True)
+        show_text_overlay = st.toggle("Show Text Overlay", value=True)
+        show_border = st.toggle("Show Border", value=False)
 
     return AnimationOptions(
-        show_animation,
         show_force,
         show_terminal_state,
         show_constraint_box,
@@ -181,26 +183,85 @@ def get_animation_options_from_ui():
 
 
 def get_state_options_from_ui(default_angle=0, max_angle=180, suffix=""):
-    position = st.slider("Position (m)", min_value=-1.5, max_value=1.5, value=0.0, step=0.1, key=f"position_{suffix}")
-    velocity = st.slider("Velocity (m/s)", min_value=-4.0, max_value=4.0, value=0.0, step=0.1, key=f"velocity_{suffix}")
-    angle_deg = st.slider(
-        "Angle (deg)",
-        min_value=-max_angle,
-        max_value=max_angle,
-        value=default_angle,
-        step=10,
-        key=f"angle_deg_{suffix}",
-    )
-    angle = angle_deg * (2 * np.pi / 360)
-    angular_velocity_rps = st.slider(
-        "Angular Velocity (rev/s)",
-        min_value=-2.0,
-        max_value=2.0,
-        value=0.0,
-        step=0.1,
-        key=f"angular_velocity_rps_{suffix}",
-    )
-    angular_velocity = angular_velocity_rps * (2 * np.pi)
+    field_title = "Position"
+    unit = "m"
+    cols = st.columns([2, 2])
+    with cols[0]:
+        constrain_position = st.toggle(f"Enforce {field_title}", value=True, key=f"{field_title}_{suffix}_toggle")
+    with cols[1]:
+        position_from_slider = st.slider(
+            f"{field_title} ({unit})",
+            min_value=-1.5,
+            max_value=1.5,
+            value=0.0,
+            step=0.1,
+            key=f"position_{suffix}_slider",
+        )
+    if constrain_position:
+        position = position_from_slider
+    else:
+        position = None
+
+    field_title = "Velocity"
+    unit = "m/s"
+    cols = st.columns([2, 2])
+    with cols[0]:
+        constrain_velocity = st.toggle(f"Enforce {field_title}", value=True, key=f"{field_title}_{suffix}_toggle")
+    with cols[1]:
+        velocity_from_slider = st.slider(
+            f"{field_title} ({unit})",
+            min_value=-4.0,
+            max_value=4.0,
+            value=0.0,
+            step=0.1,
+            key=f"velocity_{suffix}_slider",
+        )
+    if constrain_velocity:
+        velocity = velocity_from_slider
+    else:
+        velocity = None
+
+    field_title = "Angle"
+    unit = "deg"
+    cols = st.columns([2, 2])
+    with cols[0]:
+        constrain_angle = st.toggle(f"Enforce {field_title}", value=True, key=f"{field_title}_{suffix}_toggle")
+    with cols[1]:
+        angle_deg_from_slider = st.slider(
+            f"{field_title} ({unit})",
+            min_value=-max_angle,
+            max_value=max_angle,
+            value=default_angle,
+            step=10,
+            key=f"angle_deg_{suffix}_slider",
+        )
+    if constrain_angle:
+        angle_deg = angle_deg_from_slider
+        angle = angle_deg * (2 * np.pi / 360)
+    else:
+        angle = None
+
+    field_title = "Angular Velocity"
+    unit = "rev/s"
+    cols = st.columns([2, 2])
+    with cols[0]:
+        constrain_angular_velocity = st.toggle(
+            f"Enforce {field_title}", value=True, key=f"{field_title}_{suffix}_toggle"
+        )
+    with cols[1]:
+        angular_velocity_rps_from_slider = st.slider(
+            f"{field_title} ({unit})",
+            min_value=-2.0,
+            max_value=2.0,
+            value=0.0,
+            step=0.1,
+            key=f"angular_velocity_rps_{suffix}_slider",
+        )
+    if constrain_angular_velocity:
+        angular_velocity_rps = angular_velocity_rps_from_slider
+        angular_velocity = angular_velocity_rps * (2 * np.pi)
+    else:
+        angular_velocity = None
 
     return DynamicsState(position, velocity, angle, angular_velocity)
 
@@ -272,7 +333,7 @@ def get_solver_options_from_ui():
     max_iter = st.select_slider(
         "Maximum Iterations for IPOPT Solver",
         options=[10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000],
-        value=100,
+        value=1000,
     )
     return SolverOptions(max_iter)
 

@@ -8,10 +8,6 @@ import constants
 import app_options as ao
 
 
-# TODO handle equivalent rotaions by 2*pi by encoding end points using sin, cos representation.
-# casadi doesn't like this for some reason, needs more work.
-
-
 def casadi_square(x):
     return casadi.dot(x, x)
 
@@ -32,9 +28,10 @@ def cartpole_dynamics(state: np.ndarray, action: np.ndarray, model_parameter_opt
     mass_pole = model_parameter_options.mass_pole
     length_pole = model_parameter_options.length_pole
 
-    x_dot = state[1]
-    theta = state[2]
-    theta_dot = state[3]
+    state[constants.STATE_FIELDS.index("position")]
+    x_dot = state[constants.STATE_FIELDS.index("velocity")]
+    theta = state[constants.STATE_FIELDS.index("angle")]
+    theta_dot = state[constants.STATE_FIELDS.index("angular_velocity")]
 
     f_x = action
 
@@ -84,22 +81,22 @@ def solve_optimal_control_problem(
     x0 = initial_state.numpy
     xT = terminal_state.numpy
 
-    # ---- decision variables ---------
+    # Decision variables
     X = opti.variable(constants.DIM_STATE, N + 1)  # state trajectory
-    U = opti.variable(constants.DIM_ACTION, N)  # control trajectory (throttle)
+    U = opti.variable(constants.DIM_ACTION, N)  # control trajectory
 
     # Convenience aliases
     state_field_vars = {field: X[i, :] for i, field, in enumerate(constants.STATE_FIELDS)}
     action_field_vars = {field: U[i, :] for i, field in enumerate(constants.ACTION_FIELDS)}
-    # all_field_vars = {**state_field_vars, **action_field_vars}
 
     # Objective
     objective = 0
     penalty_func_map = {"square": casadi_square, "smooth_abs": casadi_smooth_abs}
     penalty_func = penalty_func_map[penalty_options.function]
     for i, field in enumerate(constants.STATE_FIELDS):
-        delta_series = state_field_vars[field] - xT[i]
-        objective += getattr(penalty_options, field) * penalty_func(delta_series)
+        if xT[i] is not None:
+            delta_series = state_field_vars[field] - xT[i]
+            objective += getattr(penalty_options, field) * penalty_func(delta_series)
     for field in constants.ACTION_FIELDS:
         series = action_field_vars[field]
         objective += getattr(penalty_options, field) * penalty_func(series)
@@ -120,28 +117,68 @@ def solve_optimal_control_problem(
 
     # Path constraints
     for i, field in enumerate(constants.STATE_FIELDS):
-        min_value = getattr(constraint_options, field).min
-        max_value = getattr(constraint_options, field).max
-        opti.subject_to(opti.bounded(min_value, X[i, :], max_value))
+        constraint_values = getattr(constraint_options, field, None)
+        if constraint_values is not None:
+            min_value = constraint_values.min
+            max_value = constraint_values.max
+            if min_value is not None and max_value is not None:
+                opti.subject_to(opti.bounded(min_value, X[i, :], max_value))
     for i, field in enumerate(constants.ACTION_FIELDS):
-        min_value = getattr(constraint_options, field).min
-        max_value = getattr(constraint_options, field).max
-        opti.subject_to(opti.bounded(min_value, U[i, :], max_value))
+        constraint_values = getattr(constraint_options, field, None)
+        if constraint_values is not None:
+            min_value = constraint_values.min
+            max_value = constraint_values.max
+            if min_value is not None and max_value is not None:
+                opti.subject_to(opti.bounded(min_value, U[i, :], max_value))
 
     # Boundary conditions
-    opti.subject_to(X[:, 0] == x0)  # initial state
-    opti.subject_to(X[:, -1] == xT)  # terminal state
+    for i, field in enumerate(constants.STATE_FIELDS):
+        # Initial state
+        # st.write(f"initial state {field} = {x0[i]}")
+        if x0[i] is not None:
+            opti.subject_to(X[i, 0] == x0[i])
+        # Terminal state
+        # DEBUG
+        # st.write(f"terminal state {field} = {xT[i]}")
+        if xT[i] is not None:
+            opti.subject_to(X[i, -1] == xT[i])
 
     # Initial values for solver
-    opti.set_initial(X[0, :], np.linspace(x0[0], xT[0], N + 1))
-    opti.set_initial(X[1, :], np.linspace(x0[1], xT[1], N + 1))
-    opti.set_initial(X[2, :], np.linspace(x0[2], xT[2], N + 1))
-    opti.set_initial(X[3, :], np.linspace(x0[3], xT[3], N + 1))
-    opti.set_initial(U[0, :], 0)
+    # TODO expose solver initialization methods via UI:
+    # 1. zeros
+    # 2. linear ramp from initial state to terminal state
+    # 3. random between constraint bounds w/ zeros fallback
+    for i, field in enumerate(constants.STATE_FIELDS):
+        constraint_values = getattr(constraint_options, field, None)
+        if constraint_values is not None:
+            min_value = constraint_values.min
+            max_value = constraint_values.max
+            if min_value is not None and max_value is not None:
+                # TODO
+                # # Zeros initialization
+                # opti.set_initial(X[i, :], 0.0)
+                # # Linear ramp from initial to terminal value initialization
+                if x0[i] is not None and xT[i] is not None:
+                    opti.set_initial(X[i, :], np.linspace(x0[i], xT[i], N + 1))
+                # # Random initialization
+                # opti.set_initial(X[i, :], np.random.uniform(min_value, max_value, N + 1))
+
+    for i, field in enumerate(constants.ACTION_FIELDS):
+        constraint_values = getattr(constraint_options, field, None)
+        if constraint_values is not None:
+            min_value = constraint_values.min
+            max_value = constraint_values.max
+            if min_value is not None and max_value is not None:
+                # # TODO
+                # Zeros initialization
+                opti.set_initial(U[i, :], 0.0)
+                # # Random initialization
+                # opti.set_initial(U[i, :], np.random.uniform(min_value, max_value, N))
 
     # Solve NLP
     opti_solver_options = {"ipopt": {"max_iter": solver_options.max_iter}}
     opti.solver("ipopt", opti_solver_options)  # set numerical backend
+
     try:
         sol = opti.solve()  # actual solve
     except RuntimeError as exception:
@@ -155,4 +192,5 @@ def solve_optimal_control_problem(
 
     action_out = {field: sol.value(action_field_vars[field]) for field in constants.ACTION_FIELDS}
     ocp_df["force"] = action_out["force"].tolist() + [0]
+
     return ocp_df, None
